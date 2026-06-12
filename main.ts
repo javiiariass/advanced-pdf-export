@@ -2,6 +2,41 @@ import {
   App, Component, MarkdownRenderer, MarkdownView, Menu, Modal, Notice,
   Plugin, PluginSettingTab, Setting, TFile, setIcon,
 } from "obsidian";
+import hljs from "highlight.js/lib/core";
+import { HLJS_THEMES } from "./hljs-themes";
+
+// Register only a curated set of languages — the full hljs bundle ships ~190.
+import bash from "highlight.js/lib/languages/bash";
+import c from "highlight.js/lib/languages/c";
+import cpp from "highlight.js/lib/languages/cpp";
+import css from "highlight.js/lib/languages/css";
+import go from "highlight.js/lib/languages/go";
+import java from "highlight.js/lib/languages/java";
+import javascript from "highlight.js/lib/languages/javascript";
+import json from "highlight.js/lib/languages/json";
+import markdown from "highlight.js/lib/languages/markdown";
+import python from "highlight.js/lib/languages/python";
+import rust from "highlight.js/lib/languages/rust";
+import sql from "highlight.js/lib/languages/sql";
+import typescript from "highlight.js/lib/languages/typescript";
+import xml from "highlight.js/lib/languages/xml";
+import yaml from "highlight.js/lib/languages/yaml";
+
+hljs.registerLanguage("bash", bash);
+hljs.registerLanguage("c", c);
+hljs.registerLanguage("cpp", cpp);
+hljs.registerLanguage("css", css);
+hljs.registerLanguage("go", go);
+hljs.registerLanguage("java", java);
+hljs.registerLanguage("javascript", javascript);
+hljs.registerLanguage("json", json);
+hljs.registerLanguage("markdown", markdown);
+hljs.registerLanguage("python", python);
+hljs.registerLanguage("rust", rust);
+hljs.registerLanguage("sql", sql);
+hljs.registerLanguage("typescript", typescript);
+hljs.registerLanguage("xml", xml);
+hljs.registerLanguage("yaml", yaml);
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -32,6 +67,7 @@ interface DocStyle {
   blockquoteBorderColor: string;
   codeBackground: string;
   codeFontSize: number;
+  codeTheme: string;
   tableHeaderBg: string;
   tableStriped: boolean;
   pageBackground: string;
@@ -163,6 +199,7 @@ const PRESETS: Record<string, DocStyle> = {
     blockquoteBorderColor: "#7c6af7",
     codeBackground: "#f0f0f8",
     codeFontSize: 0.85,
+    codeTheme: "github",
     tableHeaderBg: "#f0f0f8",
     tableStriped: true,
     pageBackground: "#ffffff",
@@ -185,6 +222,7 @@ const PRESETS: Record<string, DocStyle> = {
     blockquoteBorderColor: "#ccc",
     codeBackground: "#f4f4f4",
     codeFontSize: 0.82,
+    codeTheme: "github",
     tableHeaderBg: "#efefef",
     tableStriped: false,
     pageBackground: "#ffffff",
@@ -207,6 +245,7 @@ const PRESETS: Record<string, DocStyle> = {
     blockquoteBorderColor: "#999",
     codeBackground: "#f9f9f9",
     codeFontSize: 0.88,
+    codeTheme: "github",
     tableHeaderBg: "#e8e8e8",
     tableStriped: false,
     pageBackground: "#ffffff",
@@ -229,6 +268,7 @@ const PRESETS: Record<string, DocStyle> = {
     blockquoteBorderColor: "#e84393",
     codeBackground: "#f0eaff",
     codeFontSize: 0.85,
+    codeTheme: "tokyo-night-light",
     tableHeaderBg: "#2d0a4e",
     tableStriped: true,
     pageBackground: "#ffffff",
@@ -251,6 +291,7 @@ const PRESETS: Record<string, DocStyle> = {
     blockquoteBorderColor: "#0070f3",
     codeBackground: "#f1f5f9",
     codeFontSize: 0.85,
+    codeTheme: "atom-one-light",
     tableHeaderBg: "#0070f3",
     tableStriped: true,
     pageBackground: "#ffffff",
@@ -273,6 +314,7 @@ const PRESETS: Record<string, DocStyle> = {
     blockquoteBorderColor: "#111",
     codeBackground: "#f4f4f4",
     codeFontSize: 0.82,
+    codeTheme: "github",
     tableHeaderBg: "#111",
     tableStriped: false,
     pageBackground: "#ffffff",
@@ -295,6 +337,7 @@ const PRESETS: Record<string, DocStyle> = {
     blockquoteBorderColor: "#818cf8",
     codeBackground: "#0f172a",
     codeFontSize: 0.85,
+    codeTheme: "atom-one-dark",
     tableHeaderBg: "#1e293b",
     tableStriped: true,
     pageBackground: "#111827",
@@ -442,6 +485,43 @@ function postProcessRenderedHTML(root: HTMLElement): void {
   root.querySelectorAll("style, script").forEach((el) => {
     if (!el.closest("svg")) el.remove();
   });
+
+  // Re-tokenize code blocks with highlight.js so the PDF gets deterministic
+  // syntax highlighting independent of Obsidian's theme/Prism state.
+  root.querySelectorAll<HTMLElement>("pre code").forEach(highlightCodeBlock);
+}
+
+// Applies highlight.js to a single <code> block in place: reads its language
+// class (falling back to auto-detect), replaces the content with hljs token
+// spans, and tags it `.hljs`. We read textContent first, discarding Obsidian's
+// Prism spans. Shared by the post-processor and the paginator's PRE splitter so
+// code blocks that get split across pages keep their highlighting.
+function highlightCodeBlock(block: HTMLElement): void {
+  const lang = Array.from(block.classList)
+    .find((c) => c.startsWith("language-"))?.replace("language-", "");
+  const code = block.textContent ?? "";
+  const result = lang && hljs.getLanguage(lang)
+    ? hljs.highlight(code, { language: lang })
+    : hljs.highlightAuto(code);
+  block.innerHTML = result.value;
+  block.classList.add("hljs");
+}
+
+// Prefixes every selector in a highlight.js theme stylesheet with `scope`, e.g.
+// `.hljs-keyword` -> `.mpdf-doc .hljs-keyword`. Prefixing at the start of each
+// selector (rather than rewriting `.hljs` inline) keeps compound selectors like
+// `pre code.hljs` valid and lifts specificity above our own `.mpdf-doc` code
+// rules. hljs theme files are flat (no @media / nesting) once comments — the
+// only place `@` appears — are stripped, so a selector-list pass is sufficient.
+function scopeThemeCSS(css: string, scope: string): string {
+  return css
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/([^{}]+)\{/g, (_m, selectors: string) =>
+      selectors
+        .split(",")
+        .map((sel) => (sel.trim() ? `${scope} ${sel.trim()}` : sel))
+        .join(", ") + " {",
+    );
 }
 
 /** Waits for Obsidian's mermaid post-processor to finish converting all mermaid
@@ -495,6 +575,12 @@ function buildDocCSS(s: PDFExportSettings, isRTL = false): string {
     : s.fontFamily;
   const tableHeaderTextColor =
     hexLuminance(s.tableHeaderBg) < 0.35 ? "#fff" : s.headingColor;
+  // Scope the chosen highlight.js theme to `.mpdf-doc`. Beyond isolation, the
+  // added class raises every theme rule to specificity (0,2,x) so the theme's
+  // base + token colours outrank our own `.mpdf-doc code` (0,1,1) and
+  // `.mpdf-doc pre code` (0,1,2) rules — otherwise dark-theme base text would
+  // fall back to bodyColor and disappear on a dark background.
+  const hljsCSS = scopeThemeCSS(HLJS_THEMES[s.codeTheme]?.css ?? "", ".mpdf-doc");
 
   return `
   .mpdf-doc {
@@ -562,13 +648,23 @@ function buildDocCSS(s: PDFExportSettings, isRTL = false): string {
     padding: 10px 12px;
     margin: 0 0 ${s.paragraphSpacing}em;
     overflow: hidden;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
   .mpdf-doc pre code {
     font-family: 'Courier New', monospace;
     font-size: ${s.codeFontSize}em;
-    color: ${s.bodyColor};
+    color: inherit;
     white-space: pre-wrap;
     word-break: break-all;
+    background: none;
+    padding: 0;
+  }
+  ${hljsCSS}
+  /* Neutralize the theme's own .hljs background/padding (specificity 0,2,0)
+     so the block background stays under codeBackground (on the <pre>). The
+     theme still governs token + default text colours. */
+  .mpdf-doc pre code.hljs {
     background: none;
     padding: 0;
   }
@@ -687,7 +783,7 @@ function extractDocStyle(s: PDFExportSettings): DocStyle {
     h1BorderBottom: s.h1BorderBottom, h2BorderBottom: s.h2BorderBottom,
     centerH1: s.centerH1, blockquoteBg: s.blockquoteBg,
     blockquoteBorderColor: s.blockquoteBorderColor, codeBackground: s.codeBackground,
-    codeFontSize: s.codeFontSize, tableHeaderBg: s.tableHeaderBg,
+    codeFontSize: s.codeFontSize, codeTheme: s.codeTheme, tableHeaderBg: s.tableHeaderBg,
     tableStriped: s.tableStriped, pageBackground: s.pageBackground,
     marginTop: s.marginTop, marginBottom: s.marginBottom,
     marginLeft: s.marginLeft, marginRight: s.marginRight,
@@ -968,10 +1064,17 @@ function splitPreElement(
   }
   if (fitCount >= lines.length) return null;
 
-  return [
-    buildPreWithLines(preEl, lines.slice(0, fitCount)),
-    buildPreWithLines(preEl, lines.slice(fitCount)),
-  ];
+  // buildPreWithLines rebuilds the <code> from plain text (shallow clone), which
+  // drops the hljs token spans. Re-highlight each final piece so split code
+  // blocks stay coloured. The measurement candidates above stay plain — token
+  // spans are inline and don't affect height, so the fit decision is unchanged.
+  const head = buildPreWithLines(preEl, lines.slice(0, fitCount));
+  const tail = buildPreWithLines(preEl, lines.slice(fitCount));
+  for (const piece of [head, tail]) {
+    const codeEl = piece.querySelector("code");
+    if (codeEl) highlightCodeBlock(codeEl as HTMLElement);
+  }
+  return [head, tail];
 }
 
 // ── Element splitter dispatcher ──────────────────────────────────────────────
@@ -2015,6 +2118,21 @@ class PDFExportSettingTab extends PluginSettingTab {
        .setValue(String(s.codeFontSize))
        .onChange((v) => { s.codeFontSize = parseFloat(v); void this.markDirty(); }),
     );
+    new Setting(containerEl)
+      .setName("Code theme")
+      .setDesc("Syntax highlighting theme for code blocks.")
+      .addDropdown((d) => {
+        Object.entries(HLJS_THEMES).forEach(([key, { label }]) => d.addOption(key, label));
+        d.setValue(s.codeTheme)
+         .onChange((v) => {
+           s.codeTheme = v;
+           // Sync the block background with the theme so they don't clash.
+           const t = HLJS_THEMES[v];
+           if (t) s.codeBackground = t.bg;
+           // Rebuild the tab so the "Code background" colour picker reflects the sync.
+           void this.markDirty().then(() => { this.buildSettings(); });
+         });
+      });
     new Setting(containerEl).setName("Line height").addDropdown((d) =>
       d.addOptions({ "1.4": "Tight (1.4)", "1.6": "Compact (1.6)", "1.75": "Normal (1.75)", "1.85": "Relaxed (1.85)", "2.0": "Double (2.0)" })
        .setValue(String(s.lineHeight))

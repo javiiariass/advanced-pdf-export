@@ -29,6 +29,8 @@ const ctx = await esbuild.context({
   sourcemap: isProduction ? false : "inline",
   minify: isProduction,
   logLevel: "info",
+  // highlight.js theme stylesheets are imported as raw strings (see hljs-themes.ts).
+  loader: { ".css": "text" },
 });
 
 if (isProduction) {

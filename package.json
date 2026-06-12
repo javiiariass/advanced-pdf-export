@@ -18,5 +18,8 @@
     "obsidian": "latest",
     "tslib": "2.8.1",
     "typescript": "5.8.3"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1"
   }
 }
